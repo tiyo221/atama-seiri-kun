@@ -438,7 +438,7 @@
     var rect = srcEl.getBoundingClientRect();
     var offX = startX - rect.left, offY = startY - rect.top;
     var width = rect.width;
-    var started = false, ghost = null, lastZone = null;
+    var started = false, ghost = null, lastZone = null, done = false;
 
     function onMove(ev) {
       var dx = ev.clientX - startX, dy = ev.clientY - startY;
@@ -474,6 +474,8 @@
       return ev;
     }
     function onUp(ev) {
+      if (done) return; // pointerup と pointercancel の二重処理を防ぐ
+      done = true;
       var dropped = started ? zoneUnder(ev.clientX, ev.clientY) : null;
       finish(ev);
       if (dropped) {
