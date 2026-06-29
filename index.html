@@ -279,6 +279,7 @@
   var TONES = 6;
 
   var cards = load();
+  var currentStep = 1; // いま表示中のステップ（描画対象の切り分けに使う）
 
   // ---- 永続化 ----
   function load() {
@@ -297,16 +298,23 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
 
-  // 散らかし見た目用の安定値（idから決定）
+  // 散らかし見た目用の安定値（idから決定的に算出する）。
+  // 乱数ではなく id から導くことで、再描画やリロードでも付箋の色・傾きが変わらない。
+
+  // 文字列を 0 以上の整数へ畳み込む簡易ハッシュ（djb2 系の 31 倍積算）。
+  // `| 0` で都度 32bit 整数に丸めてオーバーフローを抑え、最後に絶対値を取る。
+  // 暗号用途ではなく、見た目のばらつきを安定的に決めるためだけのもの。
   function hashStr(s) {
     var h = 0; for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; } return Math.abs(h);
   }
+  // 付箋の配色（note-t0..t5）。古いカードには tone が無いので id ハッシュから決める。
   function toneOf(card) {
     if (typeof card.tone === "number") return card.tone;
     return hashStr(card.id) % TONES;
   }
+  // 付箋の傾き。id に "r" を足して色とは別系列のハッシュにし、-5..+5 度へ写す。
   function rotOf(card) {
-    return ((hashStr(card.id + "r") % 11) - 5); // -5..+5 度
+    return ((hashStr(card.id + "r") % 11) - 5); // 0..10 → -5..+5 度
   }
 
   // ---- 操作 ----
@@ -390,12 +398,8 @@
     list.forEach(function (card) { container.appendChild(builder(card)); });
   }
 
-  function render() {
-    var inbox = byStatus(STATUS.INBOX);
-    var keep = byStatus(STATUS.KEEP);
-    var trash = byStatus(STATUS.TRASH);
-
-    // STEP1: 散らかったボード（ゴミ箱以外を出した順に）
+  // STEP1: 散らかったボード（ゴミ箱以外を出した順に）
+  function renderBoard() {
     var boardList = cards.filter(function (c) { return c.status !== STATUS.TRASH; });
     renderList(document.getElementById("board"), boardList, noteEl, null);
     var hint = document.getElementById("board-hint");
@@ -404,8 +408,14 @@
     } else {
       hint.textContent = "ぜんぶで " + boardList.length + " 個。出し切ったら「仕分けへ進む」。";
     }
+  }
 
-    // STEP2
+  // STEP2: 左右ドラッグの仕分けビュー
+  function renderSort() {
+    var inbox = byStatus(STATUS.INBOX);
+    var keep = byStatus(STATUS.KEEP);
+    var trash = byStatus(STATUS.TRASH);
+
     renderList(document.getElementById("list-inbox"), inbox, function (c) { return cardEl(c, { draggable: true }); }, "（ここは空です）");
     renderList(document.getElementById("list-keep"), keep, function (c) { return cardEl(c, { draggable: true }); }, "ドラッグでここへ");
     renderList(document.getElementById("list-trash"), trash, function (c) { return cardEl(c, { draggable: true }); }, "ドラッグでここへ");
@@ -413,14 +423,24 @@
     document.getElementById("count-inbox").textContent = inbox.length;
     document.getElementById("count-keep").textContent = keep.length;
     document.getElementById("count-trash").textContent = trash.length;
+  }
 
-    // STEP3
+  // STEP3: 残った「いる」カードの達成画面
+  function renderResult() {
+    var keep = byStatus(STATUS.KEEP);
     renderList(document.getElementById("list-result"), keep, function (c) { return cardEl(c, { draggable: false }); },
       "残ったものはありません。いまは、頭の中がからっぽです。");
     var sub = document.getElementById("done-sub");
     sub.textContent = keep.length === 0
       ? "いまは何も残っていません。それも、ひとつの答えです。"
       : "本当に必要なことだけが残りました。ひとつずつで大丈夫。";
+  }
+
+  // 表示中のステップだけを描画する（非表示ビューはステップ切り替え時に描画される）。
+  function render() {
+    if (currentStep === 1) renderBoard();
+    else if (currentStep === 2) renderSort();
+    else if (currentStep === 3) renderResult();
   }
 
   // ---- ドラッグ＆ドロップ（Pointer Events / マウス・タッチ両対応）----
@@ -497,6 +517,7 @@
 
   // ---- ステップ切り替え ----
   function goStep(n) {
+    currentStep = n;
     [1, 2, 3].forEach(function (i) {
       document.getElementById("view-" + i).classList.toggle("hidden", i !== n);
     });
