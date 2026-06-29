@@ -1,0 +1,4 @@
+# 依存・ビルド成果物（このプロジェクトでは基本未使用）
+node_modules/
+.DS_Store
+Thumbs.db
