@@ -148,6 +148,19 @@
   @keyframes pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
   .card .grip { color: var(--ink-soft); font-size: 0.95rem; flex-shrink: 0; opacity: 0.55; }
   .card .text { flex: 1; word-break: break-word; }
+
+  /* カードの仕分けボタン（ドラッグが使えない／使いたくない場合の手段）。
+     キーボード・スクリーンリーダーからも操作できるよう常時表示の <button> にする。 */
+  .card .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .card-act {
+    border: 1px solid var(--line); background: #fff; color: var(--ink-soft);
+    border-radius: 8px; padding: 4px 10px; font-size: 0.8rem; font-family: inherit;
+    cursor: pointer; white-space: nowrap; transition: border-color 0.14s ease, color 0.14s ease;
+  }
+  .card-act:hover { border-color: var(--accent); color: var(--accent); }
+  .card-act-keep:hover { border-color: var(--keep); color: var(--keep); }
+  .card-act-trash:hover { border-color: var(--trash); color: var(--trash); }
+  .card-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .card.in-keep { background: var(--keep-soft); border-color: var(--keep-line); }
   .card.in-trash { background: var(--trash-soft); border-color: var(--trash-line); }
   .card.in-trash .text { color: var(--ink-soft); text-decoration: line-through; }
@@ -175,6 +188,12 @@
   .link-danger:hover { color: var(--trash); }
 
   .hidden { display: none !important; }
+
+  /* 画面には出さず、スクリーンリーダーにだけ伝えるための領域 */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
 
   /* 保存できなかったときの穏やかなお知らせ（画面下に控えめに出す） */
   .notice {
@@ -237,8 +256,8 @@
 
   <!-- STEP 2: 仕分ける -->
   <section class="panel hidden" id="view-2">
-    <p class="lead"><strong>カードをドラッグして、左右に分けよう。</strong><br>
-      「いる」なら左へ、「いらない」なら右のゴミ箱へ。迷うものは上に残したままでも大丈夫。</p>
+    <p class="lead"><strong>カードを「いる」「いらない」に分けよう。</strong><br>
+      ドラッグでも、カードのボタンでも分けられます。「いる」は残し、「いらない」はゴミ箱へ。迷うものは上に残したままでも大丈夫。</p>
     <div class="add-row">
       <input id="card-input-2" type="text" placeholder="まだ出てきたら、ここで追加できます" autocomplete="off">
       <button class="btn btn-ghost" id="add-btn-2">追加</button>
@@ -288,6 +307,9 @@
     データはこの端末のブラウザ内だけに保存されます。外部には送信されません。
   </footer>
 </div>
+
+<!-- 仕分け操作の結果をスクリーンリーダーへ伝える領域 -->
+<div class="sr-only" id="sort-live" role="status" aria-live="polite"></div>
 
 <!-- 保存できなかったときの穏やかなお知らせ -->
 <div class="notice" id="notice" role="status" aria-live="polite">
@@ -420,6 +442,38 @@
     return n;
   }
 
+  // 各ステータスの呼び名（読み上げ・ラベル用）と、そこへ移すボタンの文言。
+  var STATUS_LABEL = {};
+  STATUS_LABEL[STATUS.INBOX] = "仕分けるもの";
+  STATUS_LABEL[STATUS.KEEP] = "いる";
+  STATUS_LABEL[STATUS.TRASH] = "いらない";
+  var ACT_LABEL = {};
+  ACT_LABEL[STATUS.KEEP] = "いる";
+  ACT_LABEL[STATUS.TRASH] = "いらない";
+  ACT_LABEL[STATUS.INBOX] = "戻す";
+  // カードの現在地から「移せる先」。ドラッグと同じ仕分けを button で提供する。
+  var MOVE_TARGETS = {};
+  MOVE_TARGETS[STATUS.INBOX] = [STATUS.KEEP, STATUS.TRASH];
+  MOVE_TARGETS[STATUS.KEEP] = [STATUS.TRASH, STATUS.INBOX];
+  MOVE_TARGETS[STATUS.TRASH] = [STATUS.KEEP, STATUS.INBOX];
+
+  // 仕分けボタン群（キーボード・スクリーンリーダー対応の仕分け手段）
+  function actionsEl(card) {
+    var wrap = el("div", "actions");
+    (MOVE_TARGETS[card.status] || []).forEach(function (target) {
+      var b = el("button", "card-act card-act-" + target, ACT_LABEL[target]);
+      b.type = "button";
+      b.setAttribute("aria-label", "「" + card.text + "」を" + STATUS_LABEL[target] + "へ移動");
+      b.addEventListener("click", function () {
+        setStatus(card.id, target); // 保存・再描画はここで走る
+        announce("「" + card.text + "」を" + STATUS_LABEL[target] + "へ移動しました");
+        focusNextInbox(); // 再描画でフォーカスが外れるので、続けて仕分けられるよう寄せる
+      });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+
   // STEP2/3: 横長カード（ドラッグ可）
   function cardEl(card, opts) {
     opts = opts || {};
@@ -433,7 +487,22 @@
       attachDrag(c, card);
     }
     c.appendChild(el("span", "text", card.text));
+    if (opts.draggable) c.appendChild(actionsEl(card));
     return c;
+  }
+
+  // 仕分け結果をスクリーンリーダーへ伝える
+  function announce(msg) {
+    var live = document.getElementById("sort-live");
+    if (live) live.textContent = msg;
+  }
+  // 仕分け後、まだ残っている inbox の先頭ボタンへフォーカスを移し、
+  // キーボードだけでも連続して仕分けられるようにする。無ければ追加欄へ。
+  function focusNextInbox() {
+    var next = document.querySelector("#list-inbox .card-act");
+    if (next) { next.focus(); return; }
+    var input = document.getElementById("card-input-2");
+    if (input) input.focus();
   }
 
   function renderList(container, list, builder, emptyMsg) {
@@ -496,6 +565,7 @@
   function attachDrag(cardEl, card) {
     cardEl.addEventListener("pointerdown", function (e) {
       if (e.button != null && e.button !== 0) return; // 左クリック/タッチのみ
+      if (e.target.closest(".card-act")) return; // 仕分けボタンの操作はドラッグ開始にしない
       startDrag(e, cardEl, card);
     });
   }
