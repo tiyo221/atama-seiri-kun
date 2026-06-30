@@ -176,6 +176,25 @@
 
   .hidden { display: none !important; }
 
+  /* 保存できなかったときの穏やかなお知らせ（画面下に控えめに出す） */
+  .notice {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(12px);
+    max-width: 480px; width: calc(100% - 32px); z-index: 1100;
+    background: var(--panel); color: var(--ink); border: 1px solid var(--trash-line);
+    border-radius: 12px; box-shadow: var(--shadow); padding: 14px 16px;
+    display: flex; align-items: flex-start; gap: 10px;
+    font-size: 0.88rem; line-height: 1.55;
+    opacity: 0; pointer-events: none; transition: opacity 0.22s ease, transform 0.22s ease;
+  }
+  .notice.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+  .notice .ic { flex-shrink: 0; }
+  .notice .body { flex: 1; }
+  .notice .close {
+    flex-shrink: 0; border: none; background: none; color: var(--ink-soft);
+    cursor: pointer; font-size: 1rem; line-height: 1; padding: 2px 4px; font-family: inherit;
+  }
+  .notice .close:hover { color: var(--ink); }
+
   footer.app { text-align: center; margin-top: 28px; color: var(--ink-soft); font-size: 0.78rem; }
 
   @media (max-width: 560px) {
@@ -270,6 +289,13 @@
   </footer>
 </div>
 
+<!-- 保存できなかったときの穏やかなお知らせ -->
+<div class="notice" id="notice" role="status" aria-live="polite">
+  <span class="ic" aria-hidden="true">💾</span>
+  <span class="body" id="notice-body"></span>
+  <button class="close" id="notice-close" type="button" aria-label="閉じる">✕</button>
+</div>
+
 <script>
 (function () {
   "use strict";
@@ -291,8 +317,29 @@
       return data.filter(function (c) { return c && typeof c.text === "string"; });
     } catch (e) { return []; }
   }
+  // 保存。クォータ超過などで保存できない場合は、データを勝手に消さず、
+  // 保存できなかったことだけを穏やかにユーザーへ知らせる（設計思想: プレッシャーを与えない）。
   function save() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cards)); } catch (e) {}
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+      return true;
+    } catch (e) {
+      if (isQuotaError(e)) {
+        showNotice("この端末の保存容量がいっぱいで、今の内容を保存できませんでした。" +
+          "画面を開いている間は使えますが、閉じると今回の変更は残らないかもしれません。" +
+          "いらないカードを少し減らすと、また保存できるようになります。");
+      }
+      // それ以外（localStorage が使えない環境など）は従来どおり保存なしで動作継続する。
+      return false;
+    }
+  }
+  // クォータ超過エラーの判定（ブラウザごとに name / code が異なるため両方を見る）。
+  function isQuotaError(e) {
+    return !!e && (
+      e.name === "QuotaExceededError" ||
+      e.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+      e.code === 22 || e.code === 1014
+    );
   }
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -528,6 +575,23 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
     if (n === 1) setTimeout(function () { document.getElementById("card-input").focus(); }, 50);
   }
+
+  // ---- お知らせ表示 ----
+  var noticeTimer = null;
+  function showNotice(msg) {
+    var n = document.getElementById("notice");
+    if (!n) return;
+    document.getElementById("notice-body").textContent = msg;
+    n.classList.add("show");
+    if (noticeTimer) clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(hideNotice, 8000); // しばらくしたら自動で引っ込める
+  }
+  function hideNotice() {
+    var n = document.getElementById("notice");
+    if (n) n.classList.remove("show");
+    if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
+  }
+  document.getElementById("notice-close").addEventListener("click", hideNotice);
 
   // ---- 入力配線 ----
   function wireAdd(inputId, btnId) {
